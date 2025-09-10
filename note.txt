@@ -1,0 +1,29 @@
+SELECT 
+    u.tx_nome_completo AS NomeUsuario,
+    'https://jmt.engage.bz/#/certificates/' + CAST(uc.tx_guid AS VARCHAR(36)) AS LinkCertificado
+FROM USUARIO_CERTIFICADO uc
+INNER JOIN USUARIO u 
+    ON u.id = uc.id_usuario
+WHERE uc.id_cliente = 'jmt'
+  AND uc.id_trilha = 87145 
+  AND uc.id_usuario IN (
+      SELECT id
+      FROM usuario
+      WHERE tx_nome_completo IN (
+          -- sua lista de nomes aqui
+      )
+      AND id_cliente = 'jmt'
+  );
+
+
+SELECT 
+    u.tx_nome_completo AS NomeUsuario,
+    'https://tothbe.engage.bz/#/certificates/' + CAST(uc.tx_guid AS VARCHAR(36)) AS LinkCertificado
+FROM USUARIO_CERTIFICADO uc
+INNER JOIN USUARIO u 
+    ON u.id = uc.id_usuario
+WHERE uc.id_cliente = 'Tothbe'
+  AND uc.id_trilha = 89064 
+  AND uc.id_status = 1
+
+ 
