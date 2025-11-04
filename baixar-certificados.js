@@ -62,7 +62,6 @@ async function salvarPdf(page, url, outPath) {
     path: outPath,
     printBackground: true,
     format: 'A4',
-    margin: { top: '10mm', right: '10mm', bottom: '10mm', left: '10mm' }
   });
 }
 
