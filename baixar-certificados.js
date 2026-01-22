@@ -5,21 +5,45 @@ const path = require('path');
 const { parse } = require('csv-parse');
 const puppeteer = require('puppeteer');
 
-const INPUT_TSV = path.join(__dirname, 'dados.tsv');
-const OUTPUT_DIR = path.join(__dirname, 'certificados');
+const INPUT_TSV = path.join(__dirname, 'dados_reprocessar.tsv');
+const OUTPUT_DIR = path.join(__dirname, 'certificados2');
+
 const CONCURRENCY = 3;            // nº de abas simultâneas
 const LOGIN_NECESSARIO = false;   // se precisar logar, mude para true
+const USE_FOLDERS = false;         // cria pastas por Competicao/Trilha (recomendado p/ 41k arquivos)
 
-// Ajuste se precisar logar antes (selecione os elementos corretos do seu login)
 const CREDENCIAIS = { usuario: 'SEU_LOGIN', senha: 'SUA_SENHA' };
 
 function sanitizeFilename(name) {
   const base = (name || '')
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // remove acentos
-    .replace(/[^\w\s.-]/g, '') // remove símbolos estranhos
-    .replace(/\s+/g, ' ')      // compacta espaços múltiplos
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\w\s.-]/g, '')
+    .replace(/\s+/g, ' ')
     .trim();
-  return base || 'usuario_sem_nome';
+  return base || 'sem_nome';
+}
+
+function limitLen(s, max) {
+  const str = (s || '').toString();
+  if (str.length <= max) return str;
+  return str.slice(0, max).trim();
+}
+
+function safeSegment(value, max = 60) {
+  return limitLen(sanitizeFilename(value), max) || 'sem_info';
+}
+
+function guid8(guid) {
+  const g = (guid || '').toString().replace(/-/g, '');
+  return g ? g.slice(0, 8) : 'semguid';
+}
+
+function escapeHtml(str) {
+  return (str || '').toString()
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 async function lerTSV(caminho) {
@@ -34,8 +58,12 @@ async function lerTSV(caminho) {
       }))
       .on('data', (r) => {
         rows.push({
+          usuarioId: r.UsuarioId,
           nome: r.NomeUsuario,
-          url: r.LinkCertificado
+          competicao: r.CompeticaoNome,
+          trilha: r.TrilhaDescricao,
+          guid: r.CertificadoGuid,
+          url: r.LinkCertificado,
         });
       })
       .on('end', () => resolve(rows))
@@ -44,7 +72,6 @@ async function lerTSV(caminho) {
 }
 
 async function loginSeNecessario(page) {
-  // Exemplo – ajuste para o fluxo real
   await page.goto('https://jsfassessoria.engage.bz/#/login', { waitUntil: 'networkidle0', timeout: 120000 });
   await page.type('#usuario', CREDENCIAIS.usuario);
   await page.type('#senha', CREDENCIAIS.senha);
@@ -56,8 +83,9 @@ async function loginSeNecessario(page) {
 
 async function salvarPdf(page, url, outPath) {
   await page.goto(url, { waitUntil: 'networkidle0', timeout: 120000 });
-  // Se o certificado carregar dados via API, acrescente um wait:
-  // await page.waitForTimeout(1500);
+
+
+
   await page.pdf({
     path: outPath,
     printBackground: true,
@@ -67,7 +95,7 @@ async function salvarPdf(page, url, outPath) {
 }
 
 async function run() {
-  if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR);
+  if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
   const linhas = await lerTSV(INPUT_TSV);
   if (!linhas.length) {
@@ -93,23 +121,47 @@ async function run() {
       const idx = i++;
       if (idx >= linhas.length) break;
 
-      const { nome, url } = linhas[idx];
-      const baseName = sanitizeFilename(nome);
+      const { usuarioId, nome, competicao, trilha, guid, url } = linhas[idx];
+
+      // pastas (recomendado)
+      let dir = OUTPUT_DIR;
+      if (USE_FOLDERS) {
+        const compFolder = safeSegment(competicao || 'Sem competicao', 80);
+        const trilhaFolder = safeSegment(trilha || 'Sem trilha', 80);
+        dir = path.join(OUTPUT_DIR, compFolder, trilhaFolder);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      }
+
+      // nome do arquivo (único e rastreável)
+      const baseName = [
+        safeSegment(competicao || 'Sem competicao', 50),
+        safeSegment(trilha || 'Sem trilha', 45),
+        safeSegment(nome || 'Sem nome', 45),
+        `u${usuarioId || '0'}`,
+        guid8(guid),
+      ].join(' - ');
+
       let fileName = `${baseName}.pdf`;
+
+      // segurança extra (quase nunca vai bater com guid8 + userId, mas mantém)
       let k = 2;
-      while (fs.existsSync(path.join(OUTPUT_DIR, fileName))) {
+      while (fs.existsSync(path.join(dir, fileName))) {
         fileName = `${baseName} (${k++}).pdf`;
       }
-      const outPath = path.join(OUTPUT_DIR, fileName);
+
+      const outPath = path.join(dir, fileName);
+
+      // texto dentro do PDF (header)
+      const headerText = `${competicao || 'Sem competição'} - ${trilha || 'Sem trilha'} - ${nome || 'Sem nome'}`;
 
       try {
         const page = await context.newPage();
-        await salvarPdf(page, url, outPath);
+        await salvarPdf(page, url, outPath, headerText);
         await page.close();
         console.log(`[OK] ${fileName}`);
       } catch (e) {
         console.error(`[ERRO] ${fileName} -> ${e.message}`);
-        erros.push({ nome, url, arquivo: fileName, erro: e.message });
+        erros.push({ usuarioId, nome, competicao, trilha, guid, url, arquivo: fileName, erro: e.message });
       }
     }
   }
