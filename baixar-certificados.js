@@ -1,5 +1,10 @@
 // baixar-certificados.js
 // Node 18+ recomendado
+//
+// TSV esperado (dados.tsv): colunas separadas por TAB
+//   NomeUsuario    LinkCertificado    Treinamento (opcional)
+// Se Treinamento existir (ex.: LGPD, IA, SI), os PDFs vão em subpastas certificados/LGPD/, etc.
+// Use consultar-certificados-tothbe.sql para gerar o TSV a partir do banco.
 const fs = require('fs');
 const path = require('path');
 const { parse } = require('csv-parse');
@@ -35,7 +40,8 @@ async function lerTSV(caminho) {
       .on('data', (r) => {
         rows.push({
           nome: r.NomeUsuario,
-          url: r.LinkCertificado
+          url: r.LinkCertificado,
+          treinamento: r.Treinamento || null  // opcional: LGPD, IA, SI, etc. → salva em subpasta
         });
       })
       .on('end', () => resolve(rows))
@@ -198,14 +204,17 @@ async function run() {
       const idx = i++;
       if (idx >= linhas.length) break;
 
-      const { nome, url } = linhas[idx];
+      const { nome, url, treinamento } = linhas[idx];
       const baseName = sanitizeFilename(nome);
+      const subDir = treinamento ? sanitizeFilename(treinamento) : '';
+      const dir = subDir ? path.join(OUTPUT_DIR, subDir) : OUTPUT_DIR;
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       let fileName = `${baseName}.pdf`;
       let k = 2;
-      while (fs.existsSync(path.join(OUTPUT_DIR, fileName))) {
+      while (fs.existsSync(path.join(dir, fileName))) {
         fileName = `${baseName} (${k++}).pdf`;
       }
-      const outPath = path.join(OUTPUT_DIR, fileName);
+      const outPath = path.join(dir, fileName);
 
       try {
         const page = await context.newPage();
@@ -221,12 +230,14 @@ async function run() {
         const tempoRestante = velocidade > 0 ? ((linhas.length - idx - 1) / velocidade).toFixed(0) : 'calculando...';
         const segundosPorCertificado = tempoDecorrido > 0 ? (tempoDecorrido / sucessos).toFixed(1) : '0';
         
-        console.log(`[${idx + 1}/${linhas.length}] (${progresso}%) ✅ ${fileName}`);
+        const pathRel = subDir ? `${subDir}/${fileName}` : fileName;
+        console.log(`[${idx + 1}/${linhas.length}] (${progresso}%) ✅ ${pathRel}`);
         console.log(`   ⏱️  Tempo decorrido: ${minutosDecorridos} min | 🚀 Velocidade: ${velocidade.toFixed(1)} cert/min | ⏳ Tempo restante: ~${tempoRestante} min | 📊 ${segundosPorCertificado}s por certificado`);
       } catch (e) {
-        console.error(`[${idx + 1}/${linhas.length}] ❌ ERRO: ${fileName}`);
+        const pathRel = subDir ? `${subDir}/${fileName}` : fileName;
+        console.error(`[${idx + 1}/${linhas.length}] ❌ ERRO: ${pathRel}`);
         console.error(`   Erro: ${e.message}`);
-        erros.push({ nome, url, arquivo: fileName, erro: e.message });
+        erros.push({ nome, url, treinamento: treinamento || null, arquivo: pathRel, erro: e.message });
       }
     }
   }
